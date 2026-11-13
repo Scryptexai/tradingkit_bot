@@ -34,6 +34,14 @@ class JobLedger:
             self.event(job_id,state,state,{k:v for k,v in allowed.items() if k not in {'error_message'}})
     def event(self,job_id,event_type,status,payload):
         self.conn.execute('INSERT INTO job_events VALUES(?,?,?,?,?,?)',(str(uuid.uuid4()),job_id,event_type,status,json.dumps(payload),stamp()))
+    def recoverable(self, campaign_id=None):
+        terminal=('completed','dead_letter')
+        marks=','.join('?' for _ in terminal)
+        if campaign_id:
+            rows=self.conn.execute(f"SELECT * FROM backtest_jobs WHERE campaign_id=? AND status NOT IN ({marks}) ORDER BY created_at",(campaign_id,*terminal)).fetchall()
+        else:
+            rows=self.conn.execute(f"SELECT * FROM backtest_jobs WHERE status NOT IN ({marks}) ORDER BY created_at",terminal).fetchall()
+        return [dict(r) for r in rows]
     def finish_after_report_validation(self,job_id,report_id,validated):
         if not validated: raise ValueError('cannot complete job without a validated retrieved report')
         self.transition(job_id,'completed',external_report_id=report_id)

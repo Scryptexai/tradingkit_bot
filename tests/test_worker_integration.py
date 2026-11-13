@@ -36,6 +36,17 @@ def test_worker_runs_complete_lifecycle_only_with_explicit_gate():
         await worker.shutdown()
     asyncio.run(go())
 
+def test_worker_recovers_persisted_external_job_without_resubmitting():
+    async def go():
+        ledger,job=create_job();adapter=MockBacktestAdapter();worker=CampaignWorker(ledger,adapter,max_concurrency=1,backoff_base=.001)
+        for state,kwargs in [('compilation_started',{}),('compiled',{}),('submitted',{}),('accepted',{'external_job_id':'already-accepted'})]:ledger.transition(job['id'],state,**kwargs)
+        results=await worker.recover_interrupted(gate=GateState(True,True,True,True,True,True))
+        assert results==[{'status':'completed','report_id':'mock-report-1'}]
+        assert adapter.submissions==0
+        assert ledger.conn.execute('select status from backtest_jobs').fetchone()['status']=='completed'
+        await worker.shutdown()
+    asyncio.run(go())
+
 def test_worker_retries_then_dead_letters_failure_without_fabricating_success():
     async def go():
         ledger,job=create_job();worker=CampaignWorker(ledger,MockBacktestAdapter(False),max_concurrency=1,max_retries=1,backoff_base=.001)
