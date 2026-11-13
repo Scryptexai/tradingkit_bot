@@ -47,6 +47,15 @@ def test_worker_recovers_persisted_external_job_without_resubmitting():
         await worker.shutdown()
     asyncio.run(go())
 
+def test_worker_recovers_submitted_job_with_external_id_without_duplicate_submit():
+    async def go():
+        ledger,job=create_job();adapter=MockBacktestAdapter();worker=CampaignWorker(ledger,adapter,max_concurrency=1,backoff_base=.001)
+        ledger.transition(job['id'],'compilation_started');ledger.transition(job['id'],'compiled');ledger.transition(job['id'],'submitted',external_job_id='submit-ack-was-persisted')
+        result=await worker.recover_interrupted(gate=GateState(True,True,True,True,True,True))
+        assert result==[{'status':'completed','report_id':'mock-report-1'}]
+        assert adapter.submissions==0
+    asyncio.run(go())
+
 def test_worker_retries_then_dead_letters_failure_without_fabricating_success():
     async def go():
         ledger,job=create_job();worker=CampaignWorker(ledger,MockBacktestAdapter(False),max_concurrency=1,max_retries=1,backoff_base=.001)

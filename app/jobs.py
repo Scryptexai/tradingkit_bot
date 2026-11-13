@@ -15,12 +15,19 @@ class JobLedger:
     def __init__(self,conn:sqlite3.Connection): self.conn=conn; self.conn.row_factory=sqlite3.Row
     def create(self,*,campaign_id,strategy_id,strategy_version_id,idempotency_key,source,parameters,market,timeframe,max_attempts=3,timeout_seconds=900):
         if not idempotency_key or len(idempotency_key)>128: raise ValueError('idempotency key required (max 128 chars)')
-        existing=self.conn.execute('SELECT * FROM backtest_jobs WHERE idempotency_key=?',(idempotency_key,)).fetchone()
-        if existing: return dict(existing),False
         jid=str(uuid.uuid4()); ts=stamp()
-        with self.conn:
-            self.conn.execute('INSERT INTO backtest_jobs(id,campaign_id,strategy_id,strategy_version_id,status,idempotency_key,source_snapshot,parameters_snapshot,market,timeframe,max_attempts,timeout_seconds,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,campaign_id,strategy_id,strategy_version_id,'generated',idempotency_key,source,json.dumps(parameters,sort_keys=True),market,timeframe,max_attempts,timeout_seconds,ts,ts))
-            self.event(jid,'strategy_generated','generated',{})
+        # Serialize idempotency lookup + insert so concurrent dispatchers cannot create
+        # duplicate logical jobs. The unique DB constraint remains the final guard.
+        try:
+            with self.conn:
+                existing=self.conn.execute('SELECT * FROM backtest_jobs WHERE idempotency_key=?',(idempotency_key,)).fetchone()
+                if existing: return dict(existing),False
+                self.conn.execute('INSERT INTO backtest_jobs(id,campaign_id,strategy_id,strategy_version_id,status,idempotency_key,source_snapshot,parameters_snapshot,market,timeframe,max_attempts,timeout_seconds,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(jid,campaign_id,strategy_id,strategy_version_id,'generated',idempotency_key,source,json.dumps(parameters,sort_keys=True),market,timeframe,max_attempts,timeout_seconds,ts,ts))
+                self.event(jid,'strategy_generated','generated',{})
+        except sqlite3.IntegrityError:
+            existing=self.conn.execute('SELECT * FROM backtest_jobs WHERE idempotency_key=?',(idempotency_key,)).fetchone()
+            if existing: return dict(existing),False
+            raise
         return dict(self.conn.execute('SELECT * FROM backtest_jobs WHERE id=?',(jid,)).fetchone()),True
     def transition(self,job_id,state,**data):
         row=self.conn.execute('SELECT status FROM backtest_jobs WHERE id=?',(job_id,)).fetchone()
@@ -30,7 +37,8 @@ class JobLedger:
         allowed={k:v for k,v in data.items() if k in {'external_job_id','external_report_id','error_class','error_message','attempt'}}
         set_clause=', '.join(["status=?","updated_at=?"]+[f'{k}=?' for k in allowed])
         with self.conn:
-            self.conn.execute(f'UPDATE backtest_jobs SET {set_clause} WHERE id=?',[state,stamp(),*allowed.values(),job_id])
+            updated=self.conn.execute(f'UPDATE backtest_jobs SET {set_clause} WHERE id=? AND status=?',[state,stamp(),*allowed.values(),job_id,old])
+            if updated.rowcount!=1: raise RuntimeError(f'concurrent job transition rejected for {job_id} from {old}')
             self.event(job_id,state,state,{k:v for k,v in allowed.items() if k not in {'error_message'}})
     def event(self,job_id,event_type,status,payload):
         self.conn.execute('INSERT INTO job_events VALUES(?,?,?,?,?,?)',(str(uuid.uuid4()),job_id,event_type,status,json.dumps(payload),stamp()))

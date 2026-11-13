@@ -54,10 +54,15 @@ class CampaignWorker:
             await self._rate_limit()
             if not await self.adapter.compile(job['source_snapshot']): raise ValueError('Pine source validation failed')
             self.ledger.transition(job['id'],'compiled');state='compiled'
-        if state in ('compiled','submitted'):
+        if state=='retrying' and ext_id:
+            # A persisted provider ID is authoritative. Never submit that accepted run again.
+            self.ledger.transition(job['id'],'submitted',external_job_id=ext_id,attempt=attempt);state='submitted'
+        if state=='submitted' and ext_id:
+            self.ledger.transition(job['id'],'accepted',external_job_id=ext_id);state='accepted'
+        elif state in ('compiled','submitted'):
             if state=='compiled': self.ledger.transition(job['id'],'submitted',attempt=attempt)
             await self._rate_limit()
-            # Always reuse the original key after an uncertain submit acknowledgement.
+            # Reuse the stable idempotency key after uncertain submit acknowledgement.
             accepted=await self.adapter.submit(source=job['source_snapshot'],parameters=job['parameters_snapshot'],market=job['market'],timeframe=job['timeframe'],idempotency_key=job['idempotency_key'])
             ext_id=accepted['job_id'];self.ledger.transition(job['id'],'accepted',external_job_id=ext_id);state='accepted'
         if not ext_id: raise RuntimeError('persisted external job reference is missing; refusing to invent one')
