@@ -51,7 +51,7 @@ class CampaignWorker:
     async def _once(self,job,attempt):
         row=self.ledger.conn.execute('select status,external_job_id,external_report_id from backtest_jobs where id=?',(job['id'],)).fetchone()
         state=row['status'];ext_id=row['external_job_id']
-        if state in ('generated','retrying'):
+        if state=='generated' or (state=='retrying' and not ext_id):
             self.ledger.transition(job['id'],'compilation_started');state='compilation_started'
         if state=='compilation_started':
             await self._rate_limit()
