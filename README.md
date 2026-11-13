@@ -40,9 +40,20 @@ Metrics in `app/metrics.py` include net/gross P&L, costs, win rate, profit facto
 
 OAuth is performed by TradingKit's supported host flow. Never paste tokens/passwords/cookies into this app or repository. The current adapter intentionally reports unavailable rather than simulating successful authentication. Keep this app bound to a trusted local environment until authentication, authorization, CSRF, and production deployment controls are implemented. SQLite is a local development store, not a multi-user production database. Tests use temporary SQLite and do not call TradingKit.
 
+## Cloud preview and Supabase Auth
+
+- Vercel project: `ai-quant-lab` (Vite root directory `cloud`, preview deployment built from the active branch).
+- Preview URL: https://ai-quant-lab-git-arena-b308d401-tradi-4896c3-scryptexs-projects.vercel.app (Vercel may require the account's SSO login). Stable project alias that was smoke-tested: https://ai-quant-lab-blush.vercel.app.
+- Supabase project: `ai-quant-lab`, region `ap-southeast-1`. The two SQL migrations in `supabase/migrations/` have been applied; tables are owner-scoped by RLS, with composite owner-reference constraints. Auth/DB/REST health reported healthy.
+- Supabase Auth is enabled for email magic-link/OTP. The stable Vercel alias and the branch preview URL are in the redirect allow-list. The client only receives the Supabase publishable key; no service-role key or DB password is bundled or exposed.
+- In the deployed site, enter your email and click **Email me a sign-in link**. This uses Supabase's official Auth flow. Email delivery has not been tested against your mailbox; the project currently has Supabase default email delivery (no custom SMTP credentials configured), whose provider limits may apply. If delivery is blocked, configure your own SMTP provider in Supabase Auth settings; don't paste SMTP secrets here.
+- This login authenticates access to this website and user-private strategy/campaign/knowledge rows. It is **not** TradingKit OAuth. Campaign start and actual backtest execution remain disabled until the separate official TradingKit MCP flow and worker are authorized and integrated.
+
+Local cloud UI development: `cd cloud && cp .env.example .env && npm install && npm run dev`; configure only the Supabase URL and publishable key in the local `.env`. Those two are public browser values; never put secret/service-role keys in Vite variables.
+
 ## Clone, local startup, authentication and execution walkthrough
 
-Clone from the configured source repository, then start the local app:
+Clone from the configured source repository, then start the local FastAPI research API:
 
 ```sh
 git clone https://github.com/Scryptexai/tradingkit_bot.git
