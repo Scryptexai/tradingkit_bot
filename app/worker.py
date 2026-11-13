@@ -1,5 +1,5 @@
 """Bounded async execution worker contract; real runs require the official adapter and gate."""
-import asyncio, logging
+import asyncio, logging, uuid
 logger=logging.getLogger('quantlab.worker')
 from .execution_gate import GateState
 from .jobs import JobLedger, error_class, require_start_gate
@@ -7,7 +7,7 @@ from .jobs import JobLedger, error_class, require_start_gate
 class CampaignWorker:
     def __init__(self,ledger:JobLedger,adapter,*,max_concurrency:int,timeout_seconds:int=900,max_retries:int=3,backoff_base:float=1.0,requests_per_second:float=1.0):
         if max_concurrency<1 or requests_per_second<=0: raise ValueError('positive bounded concurrency and request rate required')
-        self.ledger=ledger;self.adapter=adapter;self.semaphore=asyncio.Semaphore(max_concurrency);self.timeout=timeout_seconds;self.max_retries=max_retries;self.backoff=backoff_base;self.interval=1/requests_per_second;self._rate_lock=asyncio.Lock();self._last_request=0.0;self._stopping=False;self._active=set()
+        self.ledger=ledger;self.adapter=adapter;self.semaphore=asyncio.Semaphore(max_concurrency);self.timeout=timeout_seconds;self.max_retries=max_retries;self.backoff=backoff_base;self.interval=1/requests_per_second;self._rate_lock=asyncio.Lock();self._last_request=0.0;self._stopping=False;self._active=set();self.worker_id=f'quantlab-{uuid.uuid4()}'
     async def _rate_limit(self):
         async with self._rate_lock:
             wait=self.interval-(asyncio.get_running_loop().time()-self._last_request)
@@ -17,8 +17,11 @@ class CampaignWorker:
         require_start_gate(gate) # explicit Start flag is part of the immutable preflight state
         if self._stopping: raise RuntimeError('worker is shutting down')
         task=asyncio.current_task();self._active.add(task)
+        self.ledger.heartbeat(self.worker_id,'busy',{'active_jobs':len(self._active),'provider_adapter':type(self.adapter).__name__})
         try: return await self._run_locked(job)
-        finally: self._active.discard(task)
+        finally:
+            self._active.discard(task)
+            if not self._stopping: self.ledger.heartbeat(self.worker_id,'busy' if self._active else 'idle',{'active_jobs':len(self._active),'provider_adapter':type(self.adapter).__name__})
     async def _run_locked(self,job):
         async with self.semaphore:
             current=self.ledger.conn.execute('select status,attempt from backtest_jobs where id=?',(job['id'],)).fetchone()
@@ -85,11 +88,29 @@ class CampaignWorker:
         external ID reuses its original idempotency key through the adapter contract.
         """
         require_start_gate(gate)
-        results=[]
-        for job in self.ledger.recoverable():
-            results.append(await self.run(job,gate=gate))
-        return results
+        jobs=self.ledger.recoverable()
+        # Semaphore inside run enforces the configured bound while enabling batch dispatch.
+        return await asyncio.gather(*(self.run(job,gate=gate) for job in jobs))
+    async def serve(self,gate_provider,*,poll_interval:float=2.0):
+        """Persistent supervised poll loop. gate_provider must recheck current explicit consent."""
+        if poll_interval<=0: raise ValueError('poll_interval must be positive')
+        self._stopping=False
+        self.ledger.heartbeat(self.worker_id,'starting',{'provider_adapter':type(self.adapter).__name__})
+        while not self._stopping:
+            try:
+                gate=gate_provider() if callable(gate_provider) else gate_provider
+                if asyncio.iscoroutine(gate): gate=await gate
+                require_start_gate(gate)
+                recovered=await self.recover_interrupted(gate=gate)
+                self.ledger.heartbeat(self.worker_id,'idle',{'active_jobs':0,'recovered_jobs':len(recovered),'provider_adapter':type(self.adapter).__name__})
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.exception('worker_poll_failed',extra={'worker_id':self.worker_id,'error_class':error_class(exc)})
+                self.ledger.heartbeat(self.worker_id,'degraded',{'error_class':error_class(exc),'provider_adapter':type(self.adapter).__name__})
+            await asyncio.sleep(poll_interval)
     async def shutdown(self):
         self._stopping=True
         active=[task for task in self._active if task is not asyncio.current_task()]
         if active: await asyncio.gather(*active,return_exceptions=True)
+        self.ledger.heartbeat(self.worker_id,'stopped',{'provider_adapter':type(self.adapter).__name__})

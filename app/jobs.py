@@ -50,6 +50,10 @@ class JobLedger:
         else:
             rows=self.conn.execute(f"SELECT * FROM backtest_jobs WHERE status NOT IN ({marks}) ORDER BY created_at",terminal).fetchall()
         return [dict(r) for r in rows]
+    def heartbeat(self,worker_id,status,capabilities=None):
+        """Persist the real local worker's observed liveness; never synthesize provider auth."""
+        self.conn.execute('INSERT INTO worker_heartbeats(worker_id,status,capabilities_json,seen_at) VALUES(?,?,?,?) ON CONFLICT(worker_id) DO UPDATE SET status=excluded.status,capabilities_json=excluded.capabilities_json,seen_at=excluded.seen_at',(worker_id,status,json.dumps(capabilities or {},sort_keys=True),stamp()))
+        self.conn.commit()
     def finish_after_report_validation(self,job_id,report_id,validated):
         if not validated: raise ValueError('cannot complete job without a validated retrieved report')
         self.transition(job_id,'completed',external_report_id=report_id)

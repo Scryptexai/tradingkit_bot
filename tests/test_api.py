@@ -9,8 +9,13 @@ def test_api(tmp_path, monkeypatch):
     assert client.get('/api/health').json()['execution'] == 'unavailable'
     a=client.post('/api/strategies/generate', json={'count':3,'families':['EMA crossover'],'market':'BTCUSDT','timeframe':'1h'})
     assert a.status_code == 200 and a.json()['created'] == 3
-    assert client.get('/api/strategies').json()[0]['status'] == 'generated'
+    strategies=client.get('/api/strategies').json()
+    assert strategies[0]['status'] == 'generated'
+    assert 'strategy.entry' in strategies[0]['source'] and 'strategy.exit' in strategies[0]['source']
+    assert 'NOT compiler validated' not in strategies[0]['source']
     assert client.get('/api/leaderboard').json()['results'] == []
+    configured=client.get('/api/leaderboard?minimum_trades=5&profit_weight=0.5&drawdown_weight=0.5')
+    assert configured.status_code == 200 and configured.json()['minimum_trades'] == 5
     assert client.get('/api/execution/readiness').json()['allowed'] is False
     db=main.db(); assert db.execute('select count(*) from strategy_versions').fetchone()[0] == 3; db.close()
     campaign=client.post('/api/campaigns',json={'name':'test','total':3}).json()

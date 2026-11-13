@@ -33,6 +33,7 @@ def test_worker_runs_complete_lifecycle_only_with_explicit_gate():
         assert adapter.submissions==1
         assert ledger.conn.execute('select status from backtest_jobs').fetchone()['status']=='completed'
         assert [r[0] for r in ledger.conn.execute('select event_type from job_events')][-1]=='completed'
+        assert ledger.conn.execute('select status from worker_heartbeats where worker_id=?',(worker.worker_id,)).fetchone()['status']=='idle'
         await worker.shutdown()
     asyncio.run(go())
 

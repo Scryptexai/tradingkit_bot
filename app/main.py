@@ -14,6 +14,7 @@ from .report_store import init_report_tables
 from .migrations import apply as apply_migrations
 from .execution_gate import GateState, check as check_execution_gate
 from .evaluation import multiobjective_score, ScoreWeights, inspect_pine_source
+from .templates import pine_source
 
 DB = Path(os.getenv("QUANTLAB_DB", "data/quantlab.sqlite3"))
 FAMILIES = ["EMA crossover", "SMA crossover", "RSI reversal", "MACD momentum", "Bollinger Bands", "VWAP", "Supertrend", "ADX trend filter", "ATR breakout", "Donchian breakout", "Ichimoku", "Stochastic", "Mean reversion", "Momentum continuation", "Volume breakout", "Trend following", "Support/resistance", "Multi-indicator confluence", "Multi-timeframe confirmation", "Hybrid"]
@@ -39,10 +40,17 @@ app.mount("/static",StaticFiles(directory="static"),name="static")
 def health(): return {"status":"ok","database":"sqlite","execution":"unavailable","reason":"No authenticated TradingKit MCP worker is configured."}
 @app.get("/api/summary")
 def summary():
-    c=db(); s=c.execute("SELECT count(*) n FROM strategies").fetchone()["n"]; k=c.execute("SELECT count(*) n FROM campaigns").fetchone()["n"]; e=c.execute("SELECT count(*) n FROM events").fetchone()["n"]; r=c.execute("SELECT count(*) n FROM reports").fetchone()["n"]; c.close()
-    return {"strategies":s,"campaigns":k,"backtests_completed":r,"active_jobs":0,"validated":0,"activity_events":e,"results_source":"persisted records","execution":"unavailable"}
+    c=db(); s=c.execute("SELECT count(*) n FROM strategies").fetchone()["n"]; k=c.execute("SELECT count(*) n FROM campaigns").fetchone()["n"]; e=c.execute("SELECT count(*) n FROM events").fetchone()["n"]; r=c.execute("SELECT count(*) n FROM reports").fetchone()["n"]; active=c.execute("SELECT count(*) n FROM backtest_jobs WHERE status IN ('accepted','running','report_retrieval_started')").fetchone()["n"]; validated=c.execute("SELECT count(*) n FROM validations WHERE status IN ('validated','passed')").fetchone()["n"]; c.close()
+    return {"strategies":s,"campaigns":k,"backtests_completed":r,"active_jobs":active,"validated":validated,"activity_events":e,"results_source":"persisted records","execution":"unavailable"}
 @app.get("/api/connections")
-def connections(): return {"tradingkit":{"status":"not_connected","authentication":"not_verified","capabilities":None,"last_checked":None,"reason":"This local starter has no host-managed MCP OAuth bridge."},"worker":{"status":"offline"}}
+def connections():
+    c=db(); row=c.execute("SELECT worker_id,status,capabilities_json,seen_at FROM worker_heartbeats ORDER BY seen_at DESC LIMIT 1").fetchone(); c.close()
+    worker={"status":"offline","worker_id":None,"last_seen":None,"capabilities":None}
+    if row:
+        try: live=(datetime.now(timezone.utc)-datetime.fromisoformat(row['seen_at'])).total_seconds() <= 30
+        except ValueError: live=False
+        worker={"status":row['status'] if live else "stale/offline","worker_id":row['worker_id'],"last_seen":row['seen_at'],"capabilities":json.loads(row['capabilities_json'])}
+    return {"tradingkit":{"status":"not_connected","authentication":"not_verified","capabilities":None,"last_checked":None,"reason":"This local starter has no host-managed MCP OAuth bridge."},"worker":worker}
 @app.get("/api/execution/readiness")
 def execution_readiness(): return check_execution_gate(GateState())
 @app.get("/api/strategies")
@@ -73,11 +81,11 @@ def generate(req:Generate):
     for i in range(req.count):
         family=families[i%len(families)]; period=10+(i%5)*5
         rules={"family":family,"market":req.market,"timeframe":req.timeframe,"direction":req.direction,"entry":"family signal; close-confirmed evaluation","exit":"opposite signal or risk exit"}
-        params={"period":period,"stop_loss_pct":1.0+(i%3)*0.5,"take_profit_pct":2.0+(i%4),"risk_reward":2.0}
+        params={"period":period,"stop_loss_pct":1.0+(i%3)*0.5,"take_profit_pct":2.0+(i%4),"risk_per_trade_pct":1.0,"risk_reward":(2.0+(i%4))/(1.0+(i%3)*0.5)}
         normalized=json.dumps({"rules":rules,"parameters":params},sort_keys=True,separators=(",",":")); digest=hashlib.sha256(normalized.encode()).hexdigest()
         if c.execute("SELECT 1 FROM strategies WHERE source_hash=?",(digest,)).fetchone(): continue
         sid=str(uuid.uuid4()); name=f"{family} · {req.timeframe} · {digest[:6]}"
-        source=f"// Pine Script v6 draft — NOT compiler validated\n//@version=6\nstrategy({json.dumps(name)})\n// Candidate specification: {normalized}\n"
+        source=pine_source(name=name,family=family,direction=req.direction,period=period,stop_loss_pct=params['stop_loss_pct'],take_profit_pct=params['take_profit_pct'],risk_per_trade_pct=1.0,source_hash=digest)
         c.execute("INSERT INTO strategies VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",(sid,name,family,1,req.market,req.timeframe,req.direction,json.dumps(params),json.dumps(rules),source,digest,now(),"generated"))
         c.execute("INSERT INTO strategy_versions VALUES(?,?,?,?,?,?,?,?)",(str(uuid.uuid4()),sid,1,source,digest,json.dumps(params,sort_keys=True),json.dumps(rules,sort_keys=True),now()))
         made.append({"id":sid,"name":name,"family":family,"version":1,"market":req.market,"timeframe":req.timeframe,"parameters":params,"status":"generated","source_hash":digest})
