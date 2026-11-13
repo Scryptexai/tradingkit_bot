@@ -10,6 +10,19 @@ SIGNALS = {
     "Bollinger Bands": ("basis=ta.sma(close, {p})\nband=ta.stdev(close, {p})*2", "ta.crossover(close, basis-band)", "ta.crossunder(close, basis+band)"),
     "Donchian breakout": ("upper=ta.highest(high, {p})[1]\nlower=ta.lowest(low, {p})[1]", "ta.crossover(close, upper)", "ta.crossunder(close, lower)"),
     "Hybrid": ("fast=ta.ema(close, {p})\nslow=ta.ema(close, {slow})\nrsi=ta.rsi(close, {p})", "ta.crossover(fast, slow) and rsi>50", "ta.crossunder(fast, slow) and rsi<50"),
+    "VWAP": ("vwapLine=ta.vwap(hlc3)", "ta.crossover(close, vwapLine)", "ta.crossunder(close, vwapLine)"),
+    "Supertrend": ("[superLine, superDir]=ta.supertrend(3, {p})", "ta.crossunder(superDir, 0)", "ta.crossover(superDir, 0)"),
+    "ADX trend filter": ("[diPlus, diMinus, adx]=ta.dmi({p}, {p})", "ta.crossover(diPlus, diMinus) and adx>20", "ta.crossover(diMinus, diPlus) and adx>20"),
+    "ATR breakout": ("atr=ta.atr({p})\nupper=ta.sma(close, {p})+atr\nlower=ta.sma(close, {p})-atr", "ta.crossover(close, upper)", "ta.crossunder(close, lower)"),
+    "Ichimoku": ("conversion=(ta.highest(high, {p})+ta.lowest(low, {p}))/2\nbase=(ta.highest(high, {slow})+ta.lowest(low, {slow}))/2", "ta.crossover(conversion, base)", "ta.crossunder(conversion, base)"),
+    "Stochastic": ("k=ta.stoch(close, high, low, {p})\nd=ta.sma(k, 3)", "ta.crossover(k, d) and k<30", "ta.crossunder(k, d) and k>70"),
+    "Mean reversion": ("basis=ta.sma(close, {p})\nband=ta.stdev(close, {p})*2", "ta.crossover(close, basis-band)", "ta.crossunder(close, basis+band)"),
+    "Momentum continuation": ("roc=ta.roc(close, {p})", "ta.crossover(roc, 0)", "ta.crossunder(roc, 0)"),
+    "Volume breakout": ("upper=ta.highest(high, {p})[1]\nlower=ta.lowest(low, {p})[1]\nvolumeOk=volume>ta.sma(volume, {p})", "ta.crossover(close, upper) and volumeOk", "ta.crossunder(close, lower) and volumeOk"),
+    "Trend following": ("fast=ta.ema(close, {p})\nslow=ta.ema(close, {slow})", "fast>slow and ta.rising(fast, 2)", "fast<slow and ta.falling(fast, 2)"),
+    "Support/resistance": ("resistance=ta.highest(high, {p})[1]\nsupport=ta.lowest(low, {p})[1]", "ta.crossover(close, resistance)", "ta.crossunder(close, support)"),
+    "Multi-indicator confluence": ("fast=ta.ema(close, {p})\nslow=ta.ema(close, {slow})\nrsi=ta.rsi(close, {p})", "ta.crossover(fast, slow) and rsi>50", "ta.crossunder(fast, slow) and rsi<50"),
+    "Multi-timeframe confirmation": ("htfFast=request.security(syminfo.tickerid, '240', ta.ema(close, {p}), lookahead=barmerge.lookahead_off)\nhtfSlow=request.security(syminfo.tickerid, '240', ta.ema(close, {slow}), lookahead=barmerge.lookahead_off)\nfast=ta.ema(close, {p})\nslow=ta.ema(close, {slow})", "ta.crossover(fast, slow) and htfFast>htfSlow", "ta.crossunder(fast, slow) and htfFast<htfSlow"),
 }
 
 def pine_source(*, name: str, family: str, direction: str, period: int, stop_loss_pct: float, take_profit_pct: float, risk_per_trade_pct: float, source_hash: str) -> str:
