@@ -1,0 +1,14 @@
+CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, subject TEXT UNIQUE, display_name TEXT, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS connections(id TEXT PRIMARY KEY, user_id TEXT, provider TEXT NOT NULL, state TEXT NOT NULL, account_ref TEXT, capabilities_json TEXT, credential_ref TEXT, last_checked TEXT, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS strategy_versions(id TEXT PRIMARY KEY, strategy_id TEXT NOT NULL, version INTEGER NOT NULL, source TEXT NOT NULL, source_hash TEXT NOT NULL, parameters_json TEXT NOT NULL, rules_json TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(strategy_id,version));
+CREATE TABLE IF NOT EXISTS backtest_jobs(id TEXT PRIMARY KEY, campaign_id TEXT NOT NULL, strategy_id TEXT NOT NULL, strategy_version_id TEXT NOT NULL, status TEXT NOT NULL, idempotency_key TEXT NOT NULL UNIQUE, source_snapshot TEXT NOT NULL, parameters_snapshot TEXT NOT NULL, market TEXT NOT NULL, timeframe TEXT NOT NULL, attempt INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 3, timeout_seconds INTEGER NOT NULL DEFAULT 900, external_job_id TEXT, external_report_id TEXT, error_class TEXT, error_message TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS job_events(id TEXT PRIMARY KEY, job_id TEXT NOT NULL, event_type TEXT NOT NULL, status TEXT NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS optimizations(id TEXT PRIMARY KEY,campaign_id TEXT,strategy_id TEXT NOT NULL,method TEXT NOT NULL,status TEXT NOT NULL,config_json TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS validations(id TEXT PRIMARY KEY,strategy_id TEXT NOT NULL,report_id TEXT,method TEXT NOT NULL,status TEXT NOT NULL,plan_json TEXT NOT NULL,result_json TEXT,created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS worker_heartbeats(worker_id TEXT PRIMARY KEY,status TEXT NOT NULL,capabilities_json TEXT NOT NULL,seen_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS audit_logs(id TEXT PRIMARY KEY,user_id TEXT,action TEXT NOT NULL,entity_type TEXT,entity_id TEXT,details_json TEXT NOT NULL,created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_jobs_campaign_status ON backtest_jobs(campaign_id,status);
+CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
+CREATE INDEX IF NOT EXISTS idx_reports_strategy ON reports(strategy_id,returned_at);
+CREATE INDEX IF NOT EXISTS idx_trades_report ON report_trades(report_id,trade_index);
