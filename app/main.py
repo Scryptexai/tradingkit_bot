@@ -95,19 +95,32 @@ def generate(req:Generate):
     c.commit(); c.close()
     return {"requested":req.count,"created":len(made),"duplicates_skipped":req.count-len(made),"items":made,"execution":"not_started"}
 @app.get("/api/leaderboard")
-def leaderboard(sort:str="multiobjective",minimum_trades:int=Query(default=30,ge=1,le=100000),profit_weight:float=Query(default=.22,ge=0,le=1),profit_factor_weight:float=Query(default=.16,ge=0,le=1),drawdown_weight:float=Query(default=.16,ge=0,le=1),expectancy_weight:float=Query(default=.12,ge=0,le=1),sample_weight:float=Query(default=.10,ge=0,le=1),stability_weight:float=Query(default=.08,ge=0,le=1),walk_forward_weight:float=Query(default=.08,ge=0,le=1),out_of_sample_weight:float=Query(default=.08,ge=0,le=1)):
+def leaderboard(sort:str="multiobjective",minimum_trades:int=Query(default=30,ge=1,le=100000),min_net_profit:float|None=None,max_drawdown:float|None=Query(default=None,ge=0,le=1),min_stability:float|None=Query(default=None,ge=0,le=1),profit_weight:float=Query(default=.22,ge=0,le=1),profit_factor_weight:float=Query(default=.16,ge=0,le=1),drawdown_weight:float=Query(default=.16,ge=0,le=1),expectancy_weight:float=Query(default=.12,ge=0,le=1),sample_weight:float=Query(default=.10,ge=0,le=1),stability_weight:float=Query(default=.08,ge=0,le=1),walk_forward_weight:float=Query(default=.08,ge=0,le=1),out_of_sample_weight:float=Query(default=.08,ge=0,le=1)):
     allowed={"multiobjective","best_wr","best_pf","lowest_dd","best_expectancy","most_stable","best_oos"}
     if sort not in allowed: raise HTTPException(400,"Unsupported leaderboard sort")
     weights=ScoreWeights(net_profit=profit_weight,profit_factor=profit_factor_weight,drawdown=drawdown_weight,expectancy=expectancy_weight,sample_size=sample_weight,stability=stability_weight,walk_forward=walk_forward_weight,out_of_sample=out_of_sample_weight)
-    c=db(); rows=c.execute("SELECT r.*,s.name,s.family FROM reports r LEFT JOIN strategies s ON s.id=r.strategy_id ORDER BY r.returned_at DESC").fetchall(); c.close()
+    c=db(); rows=c.execute("SELECT r.*,s.name,s.family FROM reports r LEFT JOIN strategies s ON s.id=r.strategy_id ORDER BY r.returned_at DESC").fetchall()
+    validation_rows=c.execute("SELECT strategy_id,status,result_json,created_at FROM validations ORDER BY created_at DESC").fetchall(); c.close()
+    evidence={}
+    for v in validation_rows:
+        if v['strategy_id'] in evidence: continue
+        try: result=json.loads(v['result_json']) if v['result_json'] else {}
+        except (TypeError,ValueError): result={}
+        evidence[v['strategy_id']]={"status":v['status'],"stability":result.get('stability_score',result.get('parameter_stability')),"walk_forward":result.get('walk_forward_score',result.get('walk_forward_consistency')),"out_of_sample":result.get('out_of_sample_score',result.get('out_of_sample_result'))}
     items=[]
     for row in rows:
-        r=dict(row); m=json.loads(r['metrics']); score=multiobjective_score(m,stability=None,walk_forward=None,out_of_sample=None,weights=weights,minimum_trades=minimum_trades)
-        items.append({"strategy_id":r['strategy_id'],"name":r['name'] or r['strategy_id'],"family":r['family'],"report_id":r['id'],"market":r['market'],"timeframe":r['timeframe'],"win_rate":m.get('win_rate'),"net_profit":m.get('net_profit'),"profit_factor":m.get('profit_factor'),"max_drawdown":m.get('max_drawdown_close_to_close'),"expectancy":m.get('expectancy'),"trade_count":m.get('trade_count'),"walk_forward_score":None,"out_of_sample_result":None,"stability_score":None,"validation_status":"unvalidated","score":score['score'],"eligible":score['eligible'],"metrics":m})
+        r=dict(row); m=json.loads(r['metrics']); ev=evidence.get(r['strategy_id'],{})
+        if int(m.get('trade_count') or 0)<minimum_trades: continue
+        net=m.get('net_profit'); dd=m.get('max_drawdown_close_to_close'); stability=ev.get('stability')
+        if min_net_profit is not None and (net is None or float(net)<min_net_profit): continue
+        if max_drawdown is not None and (dd is None or float(dd)>max_drawdown): continue
+        if min_stability is not None and (stability is None or float(stability)<min_stability): continue
+        score=multiobjective_score(m,stability=stability,walk_forward=ev.get('walk_forward'),out_of_sample=ev.get('out_of_sample'),weights=weights,minimum_trades=minimum_trades)
+        items.append({"strategy_id":r['strategy_id'],"name":r['name'] or r['strategy_id'],"family":r['family'],"report_id":r['id'],"market":r['market'],"timeframe":r['timeframe'],"win_rate":m.get('win_rate'),"net_profit":net,"profit_factor":m.get('profit_factor'),"max_drawdown":dd,"expectancy":m.get('expectancy'),"trade_count":m.get('trade_count'),"walk_forward_score":ev.get('walk_forward'),"out_of_sample_result":ev.get('out_of_sample'),"stability_score":stability,"validation_status":ev.get('status','unvalidated'),"score":score['score'],"eligible":score['eligible'],"score_components":score['components'],"metrics":m})
     key={"multiobjective":lambda x:x['score'] if x['score'] is not None else -1,"best_wr":lambda x:x['win_rate'] if x['win_rate'] is not None else -1,"best_pf":lambda x:x['profit_factor'] if isinstance(x['profit_factor'],(int,float)) else -1,"lowest_dd":lambda x:-x['max_drawdown'] if x['max_drawdown'] is not None else -1,"best_expectancy":lambda x:x['expectancy'] if x['expectancy'] is not None else -1,"most_stable":lambda x:x['stability_score'] if x['stability_score'] is not None else -1,"best_oos":lambda x:x['out_of_sample_result'] if isinstance(x['out_of_sample_result'],(int,float)) else -1}[sort]
     items.sort(key=key,reverse=True)
     for i,item in enumerate(items,1):item['rank']=i
-    return {"sort":sort,"minimum_trades":minimum_trades,"results":items,"note":"Only persisted report evidence is ranked. Unavailable validation dimensions remain null; no metrics are imputed."}
+    return {"sort":sort,"minimum_trades":minimum_trades,"results":items,"note":"Only persisted report/validation evidence is ranked. Unavailable validation dimensions remain null and are excluded from objective weights."}
 @app.get("/api/reports")
 def reports():
     c=db(); rows=c.execute("SELECT id,strategy_id,adapter,external_job_id,external_report_id,source_hash,market,timeframe,returned_at,metrics FROM reports ORDER BY returned_at DESC").fetchall(); c.close()
