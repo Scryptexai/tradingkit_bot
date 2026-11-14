@@ -21,7 +21,12 @@ def test_metrics_reject_nonfinite_trade_values():
 
 def test_report_persistence_is_idempotent_by_external_ref():
     conn=sqlite3.connect(':memory:')
-    args=dict(strategy_id='s1',adapter='TradingKit',external_job_id='job',external_report_id='report',source_hash='hash',market='BTCUSDT',timeframe='1h',trades=[ClosedTrade(10)])
+    args=dict(strategy_id='s1',strategy_version_id='v3',job_id='internal-job',adapter='TradingKit',external_job_id='job',external_report_id='report',source_hash='hash',market='BTCUSDT',timeframe='1h',interval_start='2025-01-01T00:00:00Z',interval_end='2025-02-01T00:00:00Z',parameters={'period':20},execution_started_at='2025-02-01T00:01:00Z',execution_completed_at='2025-02-01T00:02:00Z',cost_assumptions={'fees':0.1,'slippage':2,'funding_applicable':True},provider_metrics={'netProfit':10},trades=[ClosedTrade(10)])
     rid=persist_actual_report(conn,**args)
     assert conn.execute('select count(*) from report_trades where report_id=?',(rid,)).fetchone()[0]==1
-    with pytest.raises(sqlite3.IntegrityError): persist_actual_report(conn,**args)
+    report=conn.execute('select job_id,strategy_version_id,source_hash,interval_start,interval_end,parameters_json,provider_metrics_json,actual_trade_count,unavailable_fields_json from reports where id=?',(rid,)).fetchone()
+    assert report[:8]==('internal-job','v3','hash',args['interval_start'],args['interval_end'],'{"period":20}','{"netProfit":10}',1)
+    assert 'initial_capital' in report[8]
+    assert persist_actual_report(conn,**args)==rid
+    with pytest.raises(ValueError,match='different provenance'):
+        persist_actual_report(conn,**{**args,'source_hash':'changed'})

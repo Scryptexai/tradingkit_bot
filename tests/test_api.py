@@ -30,7 +30,7 @@ def test_api_leaderboard_uses_persisted_validation_evidence_and_filters(tmp_path
     generated=client.post('/api/strategies/generate',json={'count':1,'families':['EMA crossover'],'market':'BTCUSDT','timeframe':'1h'}).json()['items'][0]
     c=main.db()
     metrics={'trade_count':50,'net_profit':100,'gross_loss':20,'profit_factor':2.0,'max_drawdown_close_to_close':.1,'expectancy':2.0,'average_loss':-1.0,'win_rate':.6}
-    c.execute('INSERT INTO reports VALUES(?,?,?,?,?,?,?,?,?,?)',('r1',generated['id'],'adapter','job1','report1',generated['source_hash'],'BTCUSDT','1h','2025-01-01T00:00:00+00:00',__import__('json').dumps(metrics)))
+    c.execute('INSERT INTO reports(id,strategy_id,adapter,external_job_id,external_report_id,source_hash,market,timeframe,returned_at,metrics) VALUES(?,?,?,?,?,?,?,?,?,?)',('r1',generated['id'],'adapter','job1','report1',generated['source_hash'],'BTCUSDT','1h','2025-01-01T00:00:00+00:00',__import__('json').dumps(metrics)))
     c.execute('INSERT INTO validations VALUES(?,?,?,?,?,?,?,?)',('v1',generated['id'],'r1','walk_forward','validated','{}',__import__('json').dumps({'parameter_stability':.8,'walk_forward_consistency':.7,'out_of_sample_result':.6}),'2025-01-02T00:00:00+00:00'))
     c.commit();c.close()
     result=client.get('/api/leaderboard?minimum_trades=30&min_stability=0.75').json()['results']

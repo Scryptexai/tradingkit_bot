@@ -1,12 +1,13 @@
-"""Backtesting adapter contracts. The TradingKit MCP implementation is intentionally absent.
+"""Backtest adapter contract consumed by CampaignWorker.
 
-The packaged TradingKit integration is host-managed MCP, not a documented REST API. Never
-replace this unavailable adapter with guessed endpoints or successful fake report payloads.
+The bundled TradingKit integration is host-managed MCP. No runtime authenticated MCP
+transport/tool registry is present in this checkout, so this module deliberately does not
+invent OAuth, REST endpoints, tool schemas, or provider evidence.
 """
 from dataclasses import dataclass
-from typing import Protocol, Any
+from typing import Any, Mapping, Protocol, runtime_checkable
 
-@dataclass
+@dataclass(frozen=True)
 class AdapterCapabilities:
     connected: bool
     authenticated: bool
@@ -14,19 +15,35 @@ class AdapterCapabilities:
     reason: str
     tools: tuple[str, ...] = ()
     max_concurrency: int | None = None
+    account_ref: str | None = None
+    raw: Mapping[str, Any] | None = None
 
+class AdapterUnavailable(RuntimeError):
+    """Provider access is not configured or not authorized; no operation was attempted."""
+
+@runtime_checkable
 class BacktestAdapter(Protocol):
+    """Exact asynchronous contract used by CampaignWorker; research only, never trading."""
     async def capabilities(self) -> AdapterCapabilities: ...
-    async def submit(self, *, source: str, market: str, timeframe: str, idempotency_key: str) -> Any: ...
-    async def status(self, *, external_job_id: str) -> Any: ...
-    async def report(self, *, external_report_id: str) -> Any: ...
+    async def compile(self, source: str) -> bool: ...
+    async def submit(self, *, source: str, parameters: Mapping[str, Any], market: str,
+                     timeframe: str, idempotency_key: str) -> Mapping[str, str]: ...
+    async def wait(self, external_job_id: str) -> str: ...
+    async def report(self, external_job_id: str) -> Mapping[str, Any]: ...
+    async def validate_report(self, report: Mapping[str, Any], job: Mapping[str, Any]) -> bool: ...
 
 class TradingKitAdapterUnavailable:
+    """Fail-closed placeholder until a supported authenticated MCP host bridge is supplied."""
     async def capabilities(self) -> AdapterCapabilities:
-        return AdapterCapabilities(False, False, False, "No authenticated host-managed TradingKit MCP bridge is configured.")
+        return AdapterCapabilities(False, False, False,
+            "Blocked: this runtime has no TradingKit MCP host transport, OAuth session, or discovered tool schemas.")
+    async def compile(self, source: str) -> bool:
+        raise AdapterUnavailable("Official TradingKit compiler/codegen tool was not discovered; source was not validated.")
     async def submit(self, **kwargs):
-        raise RuntimeError("TradingKit MCP unavailable; no backtest was submitted.")
-    async def status(self, **kwargs):
-        raise RuntimeError("TradingKit MCP unavailable; job status cannot be read.")
-    async def report(self, **kwargs):
-        raise RuntimeError("TradingKit MCP unavailable; report cannot be retrieved.")
+        raise AdapterUnavailable("TradingKit MCP unavailable; no backtest was submitted.")
+    async def wait(self, external_job_id: str) -> str:
+        raise AdapterUnavailable("TradingKit MCP unavailable; provider job status cannot be read.")
+    async def report(self, external_job_id: str):
+        raise AdapterUnavailable("TradingKit MCP unavailable; provider report cannot be retrieved.")
+    async def validate_report(self, report, job) -> bool:
+        raise AdapterUnavailable("TradingKit MCP unavailable; report provenance cannot be verified.")
