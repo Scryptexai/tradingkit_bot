@@ -36,7 +36,7 @@
 ## Evidence and test classification
 
 - **Genuine backtest evidence:** none. No claim of provider compilation, execution, report validation, or profitability is made.
-- **Mock/local tests:** `python -m pytest -q` — 50 passed. Includes local SQLite state tests and mock adapter tests; it does not authenticate to TradingKit.
+- **Mock/local tests:** `python -m pytest -q` — 56 passed. Includes local SQLite state tests and mock adapter tests; it does not authenticate to TradingKit.
 - **Frontend/build checks:** `node --check cloud/src/main.js`; `npm run build --prefix cloud`; `git diff --check` — passed.
 - **Authenticated integration tests:** none.
 
@@ -52,4 +52,4 @@
 
 ## Blocking prerequisite
 
-Configure and deploy the FastAPI backend with a public HTTPS callback, Supabase session verification, exact frontend CORS origins and stable encryption key; then approve the UI-started TradingKit OAuth and verify a single genuine backtest. Provider redirect/client-registration acceptance and provider limits still need direct verification. No deployment is authorized or performed.
+A Vercel preview of the frontend was deployed from this branch (deployment `dpl_Cwp1RhNaPWksKgctMU2P7HpxRmUh`, READY): https://ai-quant-8z5jrw7fb-scryptexs-projects.vercel.app. It is a preview, not production; the Vercel project currently deploys only the `cloud` Vite frontend, and `VITE_BACKEND_URL` is not configured. The separate FastAPI backend has not been deployed. Configure/deploy it with public HTTPS callback, Supabase session verification, exact CORS origins and stable encryption key; then approve the UI-started TradingKit OAuth and verify a genuine backtest. Provider redirect/client-registration acceptance and provider limits still need direct verification. No production promotion occurred.
